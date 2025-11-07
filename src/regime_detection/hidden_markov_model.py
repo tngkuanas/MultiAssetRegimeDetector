@@ -3,13 +3,8 @@ from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 from hmmlearn.hmm import GaussianHMM
 import matplotlib.pyplot as plt
-
-# import sys
-# import os
-# sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from data_collection import get_data
-from data_preprocessing import preprocess_data, get_X_train
+from data_collection import *
+from data_preprocessing import *
 
 
 def best_number_of_components(data):
@@ -57,7 +52,6 @@ def train_hmm(data):
     labels_2 = np.where(hidden_states == 2, prices, np.nan)
     labels_3 = np.where(hidden_states == 3, prices, np.nan)
 
-    # return hmm_model, hidden_states, (labels_0, labels_1, labels_2, labels_3), score
     return hidden_states
 
 
