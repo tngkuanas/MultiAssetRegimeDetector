@@ -2,7 +2,9 @@ from data_collection import *
 from data_preprocessing import *
 from regime_detection.hidden_markov_model import *
 from trading_strategy.moving_average_crossover import *
-from strategy_manager import *
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+
 
 class StrategyManager:
 
@@ -52,7 +54,12 @@ class StrategyManager:
             state_returns = X_train.groupby("State")["Returns"].mean()
             favourable_states = state_returns[state_returns > 0].index.tolist()
 
-            strat_df["PSignal"] = [1 if s in favourable_states else 0 for s in preds]
+            strat_df["PSignal"] = 0  
+
+            strat_df.loc[X_test.index, "PSignal"] = [
+                1 if s in favourable_states else 0 for s in preds
+            ]
+
 
             for strat_name, strat_class in self.strategies.items():
                 print(f"Strategy: {strat_name}")
@@ -74,6 +81,8 @@ class StrategyManager:
                 plt.title(f"{model_name} + {strat_name} Performance")
                 plt.legend()
                 plt.show()
+
+                print(results)
 
         return results
 

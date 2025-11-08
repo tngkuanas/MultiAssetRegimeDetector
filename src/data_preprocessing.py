@@ -14,4 +14,5 @@ def get_X_train(data):
 
 def get_X_test(data):
     X_test = data[["Returns", "Range"]].iloc[500:]
+    return X_test
     
