@@ -5,3 +5,9 @@ pandas-datareader
 matplotlib
 yfinance
 hmmlearn
+fredapi
+pettingzoo
+stable-baselines3
+sb3-contrib
+torch
+supersuit

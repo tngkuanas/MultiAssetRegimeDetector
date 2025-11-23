@@ -1,0 +1,24 @@
+# Ignore API key configuration file
+config.py
+
+# Ignore Python bytecode
+*.pyc
+__pycache__/
+
+# Ignore specific development/environment files
+.env
+.DS_Store
+.vscode/
+
+# Ignore common build/distribution files
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Ignore log files
+*.log
+
+# Ignore trained models
+*.zip
