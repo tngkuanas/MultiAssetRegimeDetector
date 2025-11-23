@@ -22,8 +22,8 @@ def train_marl_strategy():
     # --- 1. Configuration ---
     # IMPORTANT: Ensure your FRED_API_KEY is set in config.py
     
-    symbols = ["SPY", "BND", "GLD", "QQQ", "VWO"]
-    start_date = "2010-01-01"
+    symbols = ["VOO", "NVO", "GOOG"]
+    start_date = "2000-01-01"
     end_date = "2020-12-31"
 
     series_to_fetch = {

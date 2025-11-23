@@ -4,7 +4,6 @@ from sklearn.preprocessing import StandardScaler
 
 class StrategyManager:
     def __init__(self):
-        # Removed symbol, start_date, end_date as they will be handled by PortfolioManager
         self.models = {}
         self.strategies = {}
 
@@ -13,37 +12,19 @@ class StrategyManager:
         self.models[name] = model_instance
 
     def add_strategy(self, name, strategy_instance):
-        """Register any trading strategy class instance with a generate_signals method."""
+        """Register any trading strategy class instance with a process method."""
         self.strategies[name] = strategy_instance
 
-    def _run_model(self, model, data):
-        """Train and predict using any model with .fit() and .predict()"""
-        preprocessed_data = preprocess_data(data)
-        X_train = preprocessed_data.iloc[:500][["Returns", "Range"]]
-        X_test = preprocessed_data.iloc[500:][["Returns", "Range"]]
-
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-
-        model.fit(X_train_scaled)
-        preds = model.predict(X_test_scaled)
-        
-        return preds, X_train, X_test
-    
-    def _run_strategy(self, strategy_instance, data):
+    def _run_strategy(self, strategy_instance, data, macro_data):
         """Run any strategy that has a .process() method."""
         if hasattr(strategy_instance, "process"):
-            return strategy_instance.process(data)
+            return strategy_instance.process(data, macro_data)
         else:
             raise AttributeError(f"{strategy_instance.__class__.__name__} has no process method.")
 
-    def process(self, asset_data):
+    def process(self, asset_data, macro_data=None):
         """
-        Processes the asset data to generate signals.
-        - Generates PSignal (regime filter) if a model is registered. Defaults to 1 if no model.
-        - Generates Signal (trading action) using the registered strategy.
-        Returns the asset_data DataFrame with 'PSignal' and 'Signal' columns added.
+        Processes asset data to generate signals, incorporating macro data if available.
         """
         if not self.strategies:
             raise ValueError("No trading strategy registered. Please add a strategy using add_strategy().")
@@ -51,26 +32,54 @@ class StrategyManager:
         asset_data_with_signals = asset_data.copy()
         strategy_name, strategy_instance = next(iter(self.strategies.items()))
 
-        # Generate PSignal (Regime Filter) only if a model is registered
         if self.models:
             model_name, model = next(iter(self.models.items()))
-            preds, X_train, X_test = self._run_model(model, asset_data_with_signals)
+            
+            # 1. Preprocess data by merging market and macro data
+            preprocessed_data = preprocess_data(asset_data_with_signals)
+            if macro_data is not None:
+                preprocessed_data = preprocessed_data.join(macro_data)
+                preprocessed_data.ffill(inplace=True)
+                preprocessed_data.dropna(inplace=True)
+            
+            X_train = preprocessed_data.iloc[:500]
+            X_test = preprocessed_data.iloc[500:]
 
-            X_train["State"] = model.predict(StandardScaler().fit_transform(X_train))
-            state_returns = X_train.groupby("State")["Returns"].mean()
-            favourable_states = state_returns[state_returns > 0].index.tolist()
+            # 2. Fit and Predict based on model type
+            if hasattr(model, 'regime_labels'): # Heuristic for JumpAwareModel
+                model.fit(X_train)
+                preds = model.predict(X_test)
+                asset_data_with_signals.loc[preds.index, "PSignal"] = preds
+            else: # Assumed to be HMM or similar numerical model
+                hmm_features = ['Returns', 'Range']
+                if macro_data is not None:
+                    hmm_features.extend(macro_data.columns)
+                
+                # Ensure all features are present in X_train/X_test before using them
+                hmm_features = [f for f in hmm_features if f in X_train.columns]
+                
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train[hmm_features])
+                model.fit(X_train_scaled) # The one and only fit call for HMM
 
-            asset_data_with_signals["PSignal"] = 0
-            psignal_dates = X_test.index
-            psignal_values = [1 if s in favourable_states else 0 for s in preds]
-            temp_psignal_series = pd.Series(psignal_values, index=psignal_dates)
-            asset_data_with_signals.loc[psignal_dates, "PSignal"] = temp_psignal_series
+                # Predict on the test set for PSignal
+                X_test_scaled = scaler.transform(X_test[hmm_features])
+                test_preds = model.predict(X_test_scaled)
+                
+                # Determine favourable states by predicting on the training set
+                train_preds = model.predict(X_train_scaled)
+                X_train_with_states = X_train.copy()
+                X_train_with_states['State'] = train_preds
+                state_returns = X_train_with_states.groupby('State')["Returns"].mean()
+                favourable_states = state_returns[state_returns > 0].index.tolist()
+                
+                psignal_series = pd.Series(test_preds, index=X_test.index).apply(lambda x: 1 if x in favourable_states else 0)
+                asset_data_with_signals.loc[psignal_series.index, "PSignal"] = psignal_series
         else:
-            # If no model is registered, default PSignal to 1 (filter is always "on")
             asset_data_with_signals["PSignal"] = 1
         
-        # Generate Signal (Trading Action)
-        asset_data_with_signals = self._run_strategy(strategy_instance, asset_data_with_signals)
-
+        asset_data_with_signals['PSignal'].fillna(0, inplace=True)
+        
+        asset_data_with_signals = self._run_strategy(strategy_instance, asset_data_with_signals, macro_data)
         asset_data_with_signals.dropna(inplace=True)
         return asset_data_with_signals

@@ -3,10 +3,11 @@ import numpy as np
 import yfinance as yf
 import matplotlib.pyplot as plt
 from data_collection import get_data
+from data_collection_fred import get_fred_data
 from strategy_manager import StrategyManager
 
 class PortfolioManager:
-    def __init__(self, symbols, strategy_manager, start_date, end_date, allocation_strategy="equal_weight"):
+    def __init__(self, symbols, strategy_manager, start_date, end_date, allocation_strategy="equal_weight", fred_series_to_fetch=None):
         self.symbols = symbols
         self.strategy_manager = strategy_manager
         self.start_date = start_date
@@ -15,27 +16,38 @@ class PortfolioManager:
         self.portfolio_returns = None
         self.aligned_data = None
         self.allocation_strategy = allocation_strategy
+        self.fred_series_to_fetch = fred_series_to_fetch if fred_series_to_fetch is not None else {}
 
     def _fetch_all_data(self):
         """Fetches historical data for all symbols."""
-        print("Fetching data for all assets...")
+        print("Fetching market data for all assets...")
         all_raw_data = {}
         for symbol in self.symbols:
             try:
                 all_raw_data[symbol] = get_data(symbol, self.start_date, self.end_date)
             except Exception as e:
-                print(f"Could not fetch data for {symbol}: {e}")
+                print(f"Could not fetch market data for {symbol}: {e}")
                 self.symbols.remove(symbol)
         if not all_raw_data:
-            raise ValueError("No data fetched for any symbol. Exiting.")
+            raise ValueError("No market data fetched for any symbol. Exiting.")
         return all_raw_data
 
-    def _generate_all_signals(self, all_raw_data):
-        """Generates trading signals for each asset using the StrategyManager."""
+    def _fetch_macro_data(self):
+        """Fetches macroeconomic data from FRED if series are specified."""
+        if not self.fred_series_to_fetch:
+            print("No FRED series specified. Skipping macro data fetch.")
+            return None
+        
+        print("Fetching macroeconomic data...")
+        macro_data = get_fred_data(series_ids=self.fred_series_to_fetch, start_date=self.start_date, end_date=self.end_date)
+        return macro_data
+
+    def _generate_all_signals(self, all_raw_data, macro_data):
+        """Generates trading signals for each asset using the StrategyManager and macro_data."""
         print("Generating signals for all assets...")
         for symbol, data in all_raw_data.items():
             print(f"  - Generating signals for {symbol}")
-            self.asset_data_with_signals[symbol] = self.strategy_manager.process(data.copy())
+            self.asset_data_with_signals[symbol] = self.strategy_manager.process(data.copy(), macro_data)
 
     def _align_data(self):
         """Aligns all asset data with signals to a common date range."""
@@ -96,11 +108,72 @@ class PortfolioManager:
                     active_assets_momentum[symbol] = df.loc[date, 'Momentum']
 
             if active_assets_momentum:
-                # Find the asset with the highest momentum
                 winner = max(active_assets_momentum, key=active_assets_momentum.get)
                 weights_df.loc[date, winner] = 1 # Allocate 100% to the winner
         
         return weights_df.fillna(0)
+
+    def _determine_crash_aware_weights(self):
+        """
+        Determines weights based on predicted regimes (Calm, Volatile, Crash).
+        Allocates across asset classes (Equities, Bonds, Gold) based on the current regime.
+        Assumes 'SPY', 'QQQ', 'VOO', 'MSFT', 'AAPL' are equities, 'BND', 'TLT' are bonds, 'GLD' is gold for this example.
+        """
+        print("Determining portfolio weights using 'crash_aware' strategy...")
+        weights_df = pd.DataFrame(0, index=next(iter(self.aligned_data.values())).index, columns=self.symbols)
+
+        # Define asset classes based on common interpretations of symbols
+        # This can be made more dynamic by passing asset types to the constructor
+        equities = [s for s in self.symbols if s in ['SPY', 'QQQ', 'VOO', 'MSFT', 'AAPL']]
+        bonds = [s for s in self.symbols if s in ['BND', 'TLT']]
+        gold = [s for s in self.symbols if s in ['GLD']]
+        
+        # Ensure that asset classes are not empty for allocation
+        if not equities and (len(equities) + len(bonds) + len(gold)) > 0:
+            print("Warning: No equity symbols found among the provided. Equity allocation will be 0.")
+        if not bonds and (len(equities) + len(bonds) + len(gold)) > 0:
+            print("Warning: No bond symbols found among the provided. Bond allocation will be 0.")
+        if not gold and (len(equities) + len(bonds) + len(gold)) > 0:
+            print("Warning: No gold symbols found among the provided. Gold allocation will be 0.")
+
+        for date in weights_df.index:
+            current_regime = None
+            # The PSignal is a global regime, so it should be consistent across assets for a given date
+            # Just pick from the first asset that has a PSignal value for this date
+            for symbol, df in self.aligned_data.items():
+                if date in df.index and 'PSignal' in df.columns and pd.notna(df.loc[date, 'PSignal']):
+                    current_regime = df.loc[date, 'PSignal']
+                    break
+            
+            if current_regime is None:
+                # If no regime detected (e.g., due to NaNs), assume cash
+                continue # Weights already 0
+            
+            # --- Allocation Rules based on Regime ---
+            target_alloc = {}
+            if current_regime == "Calm":
+                target_alloc = {'equity': 1.0, 'bond': 0.0, 'gold': 0.0}
+            elif current_regime == "Volatile":
+                target_alloc = {'equity': 0.50, 'bond': 0.30, 'gold': 0.20}
+            elif current_regime == "Crash":
+                target_alloc = {'equity': 0.20, 'bond': 0.50, 'gold': 0.30}
+            else:
+                # Unknown regime, default to cash
+                continue
+
+            # Apply target allocations
+            if equities:
+                eq_weight_per_asset = target_alloc['equity'] / len(equities)
+                for s in equities: weights_df.loc[date, s] = eq_weight_per_asset
+            if bonds:
+                bond_weight_per_asset = target_alloc['bond'] / len(bonds)
+                for s in bonds: weights_df.loc[date, s] = bond_weight_per_asset
+            if gold:
+                gold_weight_per_asset = target_alloc['gold'] / len(gold)
+                for s in gold: weights_df.loc[date, s] = gold_weight_per_asset
+        
+        return weights_df.fillna(0) # Fill any remaining NaNs with 0 (e.g., if an asset class was empty)
+
 
     def _calculate_returns(self, weights_df):
         """Calculates daily and cumulative returns for both the portfolio and a benchmark."""
@@ -140,8 +213,13 @@ class PortfolioManager:
         print(f"\n--- Running Portfolio Backtest ({', '.join(self.symbols)}) ---")
         print(f"Allocation Strategy: {self.allocation_strategy}")
         
+        # Fetch both market and macro data
         all_raw_data = self._fetch_all_data()
-        self._generate_all_signals(all_raw_data)
+        macro_data = self._fetch_macro_data()
+        
+        # Generate signals using both data sources
+        self._generate_all_signals(all_raw_data, macro_data)
+        
         self._align_data()
         
         self.symbols = list(self.aligned_data.keys()) 
@@ -153,6 +231,8 @@ class PortfolioManager:
             weights_df = self._determine_equal_weight_weights()
         elif self.allocation_strategy == "relative_momentum":
             weights_df = self._determine_relative_momentum_weights()
+        elif self.allocation_strategy == "crash_aware":
+            weights_df = self._determine_crash_aware_weights()
         else:
             raise ValueError(f"Unknown allocation_strategy: {self.allocation_strategy}")
 

@@ -15,7 +15,7 @@ class MovingAverageCrossover:
             pos_multiplier, neg_multiplier = 0, -1
         return pos_multiplier, neg_multiplier
 
-    def process(self, data, period_1=12, period_2=21, direction="long"):
+    def process(self, data, macro_data=None, period_1=12, period_2=21, direction="long"):
         df = data.copy()
         pos_multiplier, neg_multiplier = self._set_multiplier(direction)
 

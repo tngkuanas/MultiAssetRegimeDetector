@@ -24,7 +24,7 @@ def backtest_marl_strategy():
     # --- 1. Configuration ---
     # IMPORTANT: Ensure your FRED_API_KEY is set in config.py
 
-    symbols = ["SPY", "BND", "GLD", "QQQ", "VWO"]
+    symbols = ["VOO", "NVO", "GOOG"]
     start_date = "2021-01-01"
     end_date = "2024-01-01"
 
