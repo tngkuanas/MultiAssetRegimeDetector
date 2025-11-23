@@ -1,14 +1,10 @@
-from data_collection import *
-from data_preprocessing import *
-import matplotlib.pyplot as plt
+import pandas as pd
+from data_preprocessing import preprocess_data
 from sklearn.preprocessing import StandardScaler
 
-
 class StrategyManager:
-    def __init__(self, symbol, start_date, end_date):
-        self.symbol = symbol
-        self.start_date = start_date
-        self.end_date = end_date
+    def __init__(self):
+        # Removed symbol, start_date, end_date as they will be handled by PortfolioManager
         self.models = {}
         self.strategies = {}
 
@@ -16,11 +12,11 @@ class StrategyManager:
         """Register any ML/statistical model that supports fit() and predict()."""
         self.models[name] = model_instance
 
-    def add_strategy(self, name, strategy_class):
-        """Register any trading strategy class."""
-        self.strategies[name] = strategy_class
+    def add_strategy(self, name, strategy_instance):
+        """Register any trading strategy class instance with a generate_signals method."""
+        self.strategies[name] = strategy_instance
 
-    def run_model(self, model, data):
+    def _run_model(self, model, data):
         """Train and predict using any model with .fit() and .predict()"""
         preprocessed_data = preprocess_data(data)
         X_train = preprocessed_data.iloc[:500][["Returns", "Range"]]
@@ -32,65 +28,49 @@ class StrategyManager:
 
         model.fit(X_train_scaled)
         preds = model.predict(X_test_scaled)
+        
         return preds, X_train, X_test
-
-    def run_strategy(self, strategy_instance, data):
-        """Run any strategy that has a .backtest() method."""
-        # Expect generic method name for flexibility
-        if hasattr(strategy_instance, "backtest"):
-            strat_df, sharpe_b, sharpe_s = strategy_instance.backtest(data)
-        elif hasattr(strategy_instance, "backtest_ma_crossover"):
-            strat_df, sharpe_b, sharpe_s = strategy_instance.backtest_ma_crossover(12, 21, "long")
+    
+    def _run_strategy(self, strategy_instance, data):
+        """Run any strategy that has a .process() method."""
+        if hasattr(strategy_instance, "process"):
+            return strategy_instance.process(data)
         else:
-            raise AttributeError(f"{strategy_instance.__class__.__name__} has no backtest method.")
-        return strat_df, sharpe_b, sharpe_s
+            raise AttributeError(f"{strategy_instance.__class__.__name__} has no process method.")
 
-    def run_all(self):
-        """Run all registered models and strategies."""
-        results = {}
+    def process(self, asset_data):
+        """
+        Processes the asset data to generate signals.
+        - Generates PSignal (regime filter) if a model is registered. Defaults to 1 if no model.
+        - Generates Signal (trading action) using the registered strategy.
+        Returns the asset_data DataFrame with 'PSignal' and 'Signal' columns added.
+        """
+        if not self.strategies:
+            raise ValueError("No trading strategy registered. Please add a strategy using add_strategy().")
 
-        for model_name, model in self.models.items():
-            print(f"\n🔹 Running model: {model_name}")
+        asset_data_with_signals = asset_data.copy()
+        strategy_name, strategy_instance = next(iter(self.strategies.items()))
 
-            from trading_strategy.moving_average_crossover import MovingAverageCrossover
-            base_strategy = MovingAverageCrossover(self.symbol, self.start_date, self.end_date)
-            strat_df, _, _ = base_strategy.backtest_ma_crossover(12, 21, "long")
+        # Generate PSignal (Regime Filter) only if a model is registered
+        if self.models:
+            model_name, model = next(iter(self.models.items()))
+            preds, X_train, X_test = self._run_model(model, asset_data_with_signals)
 
-            preds, X_train, X_test = self.run_model(model, strat_df)
-
-            # Determine favourable regimes
             X_train["State"] = model.predict(StandardScaler().fit_transform(X_train))
             state_returns = X_train.groupby("State")["Returns"].mean()
             favourable_states = state_returns[state_returns > 0].index.tolist()
 
-            strat_df["PSignal"] = 0
-            strat_df.loc[X_test.index, "PSignal"] = [
-                1 if s in favourable_states else 0 for s in preds
-            ]
+            asset_data_with_signals["PSignal"] = 0
+            psignal_dates = X_test.index
+            psignal_values = [1 if s in favourable_states else 0 for s in preds]
+            temp_psignal_series = pd.Series(psignal_values, index=psignal_dates)
+            asset_data_with_signals.loc[psignal_dates, "PSignal"] = temp_psignal_series
+        else:
+            # If no model is registered, default PSignal to 1 (filter is always "on")
+            asset_data_with_signals["PSignal"] = 1
+        
+        # Generate Signal (Trading Action)
+        asset_data_with_signals = self._run_strategy(strategy_instance, asset_data_with_signals)
 
-            for strat_name, strat_class in self.strategies.items():
-                print(f"🔸 Strategy: {strat_name}")
-
-                strategy = strat_class(self.symbol, self.start_date, self.end_date)
-
-                # Allow strategy to take preprocessed data
-                if hasattr(strategy, "change_df"):
-                    strategy.change_df(strat_df)
-
-                strat_df_2, sharpe_b, sharpe_s = self.run_strategy(strategy, strat_df)
-
-                results[(model_name, strat_name)] = {
-                    "Sharpe Benchmark": sharpe_b,
-                    "Sharpe Strategy": sharpe_s,
-                    "Returns Benchmark": strat_df_2["Bench_C_Rets"].iloc[-1],
-                    "Returns Strategy": strat_df_2["Strat_C_Rets"].iloc[-1],
-                }
-
-                plt.figure(figsize=(12, 6))
-                plt.plot(strat_df_2["Bench_C_Rets"], label="Benchmark")
-                plt.plot(strat_df_2["Strat_C_Rets"], label=f"{model_name} + {strat_name}")
-                plt.title(f"{model_name} + {strat_name} Performance")
-                plt.legend()
-                plt.show()
-
-        return results
+        asset_data_with_signals.dropna(inplace=True)
+        return asset_data_with_signals
