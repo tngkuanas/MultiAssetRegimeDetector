@@ -6,7 +6,7 @@ from portfolio_manager import PortfolioManager
 
 if __name__ == "__main__":
     # --- General Configuration ---
-    symbols = ["VOO","VXUS","GLD","BND","GOOG"] 
+    symbols = ["VOO","VXUS","GLD","BND"] 
     start_date = "2008-01-01" # Start later to ensure enough data for features
     end_date = "2024-01-01"
 
@@ -60,7 +60,6 @@ if __name__ == "__main__":
     # print("\n\n--- RUNNING STRATEGY 3: Defensive Momentum ---")
     
     # # The StrategyManager only needs to calculate momentum scores for all assets.
-    # # The regime detection is handled internally by the 'protective_momentum' allocation strategy.
     # signal_engine_3 = StrategyManager()
     # signal_engine_3.add_strategy("Momentum", MomentumScorer(lookback_period=126))
     
@@ -78,8 +77,6 @@ if __name__ == "__main__":
     # --- STRATEGY 4: Aggressive Momentum ---
     # print("\n\n--- RUNNING STRATEGY 4: Aggressive Momentum ---")
     
-    # # The StrategyManager only needs to calculate momentum scores for all assets.
-    # # The regime detection is handled internally by the 'aggressive_momentum' allocation strategy.
     # signal_engine_4 = StrategyManager()
     # signal_engine_4.add_strategy("Momentum", MomentumScorer(lookback_period=126))
     
@@ -92,3 +89,51 @@ if __name__ == "__main__":
     #     fred_series_to_fetch={} # No FRED data needed for this strategy
     # )
     # portfolio_manager_4.run_portfolio_backtest()
+    
+    
+    #--- STRATEGY 5: Correlation-Aware Defensive Strategy ---
+    # print("\n\n--- RUNNING STRATEGY 5: Correlation-Aware Defensive Strategy ---")
+    
+    # signal_engine_5 = StrategyManager()
+    # signal_engine_5.add_strategy("Momentum", MomentumScorer(lookback_period=126))
+    
+    # portfolio_manager_5 = PortfolioManager(
+    #     symbols=symbols,
+    #     strategy_manager=signal_engine_5,
+    #     start_date=start_date,
+    #     end_date=end_date,
+    #     allocation_strategy="correlation_aware",
+    #     fred_series_to_fetch={}
+    # )
+    # portfolio_manager_5.run_portfolio_backtest()
+
+    # --- STRATEGY 6: Risk Parity Strategy ---
+    # print("\n\n--- RUNNING STRATEGY 6: Risk Parity ---")
+    
+    # signal_engine_6 = StrategyManager()
+    
+    # portfolio_manager_6 = PortfolioManager(
+    #     symbols=symbols,
+    #     strategy_manager=signal_engine_6,
+    #     start_date=start_date,
+    #     end_date=end_date,
+    #     allocation_strategy="risk_parity",
+    #     fred_series_to_fetch={}
+    # )
+    # portfolio_manager_6.run_portfolio_backtest()
+    
+    # --- STRATEGY 7: ML-Powered Dynamic Tilt ---
+    # print("\n\n--- RUNNING STRATEGY 7: ML-Powered Dynamic Tilt ---")
+    
+    # # This is a pure allocation strategy that uses an ML model internally.
+    # signal_engine_7 = StrategyManager()
+    
+    # portfolio_manager_7 = PortfolioManager(
+    #     symbols=symbols,
+    #     strategy_manager=signal_engine_7,
+    #     start_date=start_date,
+    #     end_date=end_date,
+    #     allocation_strategy="ml_dynamic_tilt",
+    #     fred_series_to_fetch=fred_series # This strategy requires macro data
+    # )
+    # portfolio_manager_7.run_portfolio_backtest()

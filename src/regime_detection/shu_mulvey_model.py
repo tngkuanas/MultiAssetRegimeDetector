@@ -31,8 +31,8 @@ class ShuMulveyModel:
         rolling_vol = returns.rolling(window=22).std()
         jumps = returns.abs() > (rolling_vol.shift(1) * self.jump_threshold)
         
-        # Simple volatility clustering (e.g., using a median split)
-        high_vol_threshold = rolling_vol.quantile(0.75)
+        # Use a rolling quantile to avoid look-ahead bias
+        high_vol_threshold = rolling_vol.rolling(window=252, min_periods=30).quantile(0.75)
         is_high_vol = rolling_vol > high_vol_threshold
         
         regime = pd.Series(0, index=returns.index, name="regime") # Default to low vol

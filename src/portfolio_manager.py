@@ -8,6 +8,7 @@ from data_collection_fred import get_fred_data
 from strategy_manager import StrategyManager
 from regime_detection.shu_mulvey_model import ShuMulveyModel
 from regime_detection.sma_crossover_regime import SMACrossoverRegime
+from regime_detection.correlation_regime_model import CorrelationRegimeModel
 
 
 class PortfolioManager:
@@ -49,9 +50,9 @@ class PortfolioManager:
 
     def _generate_all_signals(self):
         """Generates trading signals for each asset using the StrategyManager and macro_data."""
-        # For 'shu_mulvey', signals are generated inside the allocation logic, so we bypass this.
-        if self.allocation_strategy == 'shu_mulvey':
-            print("Bypassing signal generation for 'shu_mulvey' strategy.")
+        # For pure allocation strategies, signals are generated inside the allocation logic, so we bypass this.
+        if self.allocation_strategy in ['shu_mulvey', 'risk_parity', 'ml_dynamic_tilt']:
+            print(f"Bypassing signal generation for pure allocation strategy: '{self.allocation_strategy}'.")
             self.asset_data_with_signals = self.raw_data
             return
 
@@ -108,6 +109,12 @@ class PortfolioManager:
             return self._determine_protective_momentum_weights()
         elif self.allocation_strategy == "aggressive_momentum":
             return self._determine_aggressive_momentum_weights()
+        elif self.allocation_strategy == "correlation_aware":
+            return self._determine_correlation_aware_weights()
+        elif self.allocation_strategy == "risk_parity":
+            return self._determine_risk_parity_weights()
+        elif self.allocation_strategy == "ml_dynamic_tilt":
+            return self._determine_ml_dynamic_tilt_weights()
         elif self.allocation_strategy == "shu_mulvey":
             return self._determine_shu_mulvey_weights()
         else:
@@ -341,6 +348,200 @@ class PortfolioManager:
 
             weights_df.loc[date] = last_weights
 
+        return weights_df.fillna(0)
+
+    def _determine_correlation_aware_weights(self):
+        """
+        Allocates to assets by dynamically tilting the portfolio based on
+        market trend and stock-bond correlation signals.
+        """
+        print("Determining portfolio weights using 'correlation_aware' (dynamic tilt) strategy...")
+        weights_df = pd.DataFrame(0, index=next(iter(self.aligned_data.values())).index, columns=self.symbols)
+
+        # --- 1. Generate Signals ---
+        print("  - Generating market trend signal from VOO...")
+        stock_index_data = get_data("VOO", self.start_date, self.end_date)
+        trend_model = SMACrossoverRegime(window=200)
+        trend_signal = trend_model.process(stock_index_data)
+
+        print("  - Generating stock-bond correlation signal from VOO/BND...")
+        bond_index_data = get_data("BND", self.start_date, self.end_date)
+        corr_model = CorrelationRegimeModel(window=60, threshold=0.1)
+        corr_signal = corr_model.process(stock_index_data, bond_index_data)
+
+        # --- 2. Define Asset Classes & Allocation Profiles ---
+        risk_assets = [s for s in self.symbols if s in ["VOO", "VXUS", "GOOG"]]
+        safe_haven_assets = [s for s in self.symbols if s in ["BND"]]
+        crisis_assets = [s for s in self.symbols if s in ["GLD"]]
+
+        # Define allocation dictionaries {asset_class: percentage}
+        allocations = {
+            "risk_on":  {"risk": 0.7, "safe": 0.2, "crisis": 0.1},
+            "risk_off": {"risk": 0.2, "safe": 0.6, "crisis": 0.2},
+            "crisis":   {"risk": 0.1, "safe": 0.1, "crisis": 0.8}
+        }
+
+        # --- 3. Rebalance Monthly ---
+        rebalance_dates = weights_df.resample('ME').last().index
+        last_weights = pd.Series(0.0, index=self.symbols)
+
+        for date in weights_df.index:
+            if date in rebalance_dates:
+                current_weights = pd.Series(0.0, index=self.symbols)
+                
+                try:
+                    trend = trend_signal.loc[date, 'PSignal']
+                    correlation = corr_signal.loc[date, 'CorrelationSignal']
+                except KeyError:
+                    last_weights.loc[:] = last_weights
+                    continue
+                
+                # Choose allocation profile based on signals
+                if trend == 1:
+                    active_allocation = allocations["risk_on"]
+                else: # Trend is "risk-off"
+                    if correlation == 1: # Bonds are diversifying
+                        active_allocation = allocations["risk_off"]
+                    else: # Bonds are not diversifying
+                        active_allocation = allocations["crisis"]
+                
+                # Apply the chosen allocation profile
+                if risk_assets:
+                    for s in risk_assets:
+                        current_weights[s] = active_allocation["risk"] / len(risk_assets)
+                if safe_haven_assets:
+                    for s in safe_haven_assets:
+                        current_weights[s] = active_allocation["safe"] / len(safe_haven_assets)
+                if crisis_assets:
+                    for s in crisis_assets:
+                        current_weights[s] = active_allocation["crisis"] / len(crisis_assets)
+
+                last_weights = current_weights
+
+            weights_df.loc[date] = last_weights
+            
+        return weights_df.fillna(0)
+
+    def _determine_risk_parity_weights(self):
+        """
+        Allocates to assets based on the inverse of their volatility, aiming
+        to equalize the risk contribution of each asset.
+        """
+        print("Determining portfolio weights using 'risk_parity' strategy...")
+        weights_df = pd.DataFrame(0.0, index=next(iter(self.aligned_data.values())).index, columns=self.symbols)
+        
+        # --- Rebalance Monthly ---
+        rebalance_dates = weights_df.resample('ME').last().index
+        last_weights = pd.Series(1.0 / len(self.symbols), index=self.symbols) # Start with equal weight
+        
+        volatility_lookback = 60 # days
+
+        for date in weights_df.index:
+            if date in rebalance_dates:
+                # Get recent data slice to calculate volatility
+                historical_data = {s: df.loc[:date] for s, df in self.aligned_data.items()}
+                
+                # Calculate historical volatility for each asset
+                returns_subset = pd.DataFrame({
+                    s: np.log(df['Close']).diff() for s, df in historical_data.items()
+                }).iloc[-volatility_lookback:]
+                
+                # Calculate volatility (standard deviation of returns)
+                volatilities = returns_subset.std()
+                
+                # Inverse volatility
+                inverse_volatilities = 1 / volatilities
+                
+                # Check for infinite values that can result from zero volatility
+                inverse_volatilities.replace([np.inf, -np.inf], 0, inplace=True)
+
+                # Sum of inverse volatilities
+                sum_inv_vol = np.sum(inverse_volatilities)
+                
+                if sum_inv_vol > 0:
+                    # Weights are proportional to the inverse of their volatility
+                    current_weights = inverse_volatilities / sum_inv_vol
+                    last_weights = current_weights
+                else:
+                    # Fallback to previous weights if something went wrong
+                    last_weights.loc[:] = last_weights
+
+            weights_df.loc[date] = last_weights
+
+        return weights_df.fillna(0)
+
+    def _determine_ml_dynamic_tilt_weights(self):
+        """
+        Uses the ShuMulveyModel (ML) to predict a regime and then applies a
+        dynamic tilt allocation based on that prediction.
+        """
+        print("Determining portfolio weights using 'ml_dynamic_tilt' strategy...")
+        weights_df = pd.DataFrame(0.0, index=next(iter(self.aligned_data.values())).index, columns=self.symbols)
+
+        # --- 1. Define Asset Classes & Allocation Profiles ---
+        risk_assets = [s for s in self.symbols if s in ["VOO", "VXUS", "GOOG"]]
+        safe_haven_assets = [s for s in self.symbols if s in ["BND"]]
+        crisis_assets = [s for s in self.symbols if s in ["GLD"]]
+
+        # DATA-DRIVEN MAPPING based on previous analysis:
+        # Regime 1: High Return, High Vol -> "risk_on"
+        # Regime 0: Low Return, Medium Vol -> "neutral"
+        # Regime 2: Negative Return, High Vol -> "crisis"
+        allocations = {
+            1: {"risk": 0.7, "safe": 0.2, "crisis": 0.1},  # "risk_on"
+            0: {"risk": 0.4, "safe": 0.4, "crisis": 0.2},  # "neutral"
+            2: {"risk": 0.1, "safe": 0.3, "crisis": 0.6}   # "crisis"
+        }
+
+        # --- 2. Rebalance Monthly ---
+        min_training_period = pd.DateOffset(years=1)
+        first_rebalance_date = weights_df.index[0] + min_training_period
+        rebalance_dates = pd.date_range(start=first_rebalance_date, end=weights_df.index[-1], freq='BMS')
+        
+        last_weights = pd.Series(0.0, index=self.symbols)
+
+        for date in weights_df.index:
+            if date in rebalance_dates:
+                print(f"Rebalancing for month of {date.strftime('%Y-%m')}...")
+                current_weights = pd.Series(0.0, index=self.symbols)
+
+                # --- Walk-Forward ML Prediction ---
+                historical_data = {s: df.loc[:date] for s, df in self.aligned_data.items()}
+                historical_macro_data = self.macro_data.loc[:date] if self.macro_data is not None else None
+                
+                model = ShuMulveyModel(assets_data=historical_data, macro_data=historical_macro_data)
+                model.fit()
+                
+                # Predict regime for all risk assets and find the consensus
+                regime_probs = model.predict_proba()
+                
+                risk_asset_predictions = []
+                for asset in risk_assets:
+                    if asset in regime_probs and regime_probs[asset]:
+                        top_regime = max(regime_probs[asset], key=regime_probs[asset].get)
+                        risk_asset_predictions.append(top_regime)
+                
+                # Determine consensus by mode (most frequent prediction)
+                if risk_asset_predictions:
+                    consensus_regime = pd.Series(risk_asset_predictions).mode()[0]
+                else:
+                    consensus_regime = 0 # Default to neutral if no predictions
+
+                # Choose allocation profile based on the consensus regime
+                active_allocation = allocations.get(consensus_regime, allocations[0])
+
+                # Apply the chosen allocation profile
+                if risk_assets:
+                    for s in risk_assets: current_weights[s] = active_allocation["risk"] / len(risk_assets)
+                if safe_haven_assets:
+                    for s in safe_haven_assets: current_weights[s] = active_allocation["safe"] / len(safe_haven_assets)
+                if crisis_assets:
+                    for s in crisis_assets: current_weights[s] = active_allocation["crisis"] / len(crisis_assets)
+                
+                last_weights = current_weights
+
+            weights_df.loc[date] = last_weights
+            
         return weights_df.fillna(0)
         
     # --- Performance and Plotting ---
