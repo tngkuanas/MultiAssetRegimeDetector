@@ -22,7 +22,7 @@ def train_marl_strategy():
     # --- 1. Configuration ---
     # IMPORTANT: Ensure your FRED_API_KEY is set in config.py
     
-    symbols = ["VOO", "NVO", "GOOG"]
+    symbols = ["VOO", "NVO", "GOOG","AAPL","TSLA","NVDA"]
     start_date = "2000-01-01"
     end_date = "2020-12-31"
 

@@ -78,7 +78,7 @@ class StrategyManager:
         else:
             asset_data_with_signals["PSignal"] = 1
         
-        asset_data_with_signals['PSignal'].fillna(0, inplace=True)
+        asset_data_with_signals['PSignal'] = asset_data_with_signals['PSignal'].fillna(0)
         
         asset_data_with_signals = self._run_strategy(strategy_instance, asset_data_with_signals, macro_data)
         asset_data_with_signals.dropna(inplace=True)
