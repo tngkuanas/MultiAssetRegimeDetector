@@ -74,3 +74,54 @@ class FeatureEngineering:
         data.dropna(inplace=True)
 
         return data
+
+def calculate_jump_model_features(aligned_data):
+    """
+    Calculates the 'Holy Trinity' of features for the Statistical Jump Model.
+    The features are standardized using a rolling 252-day window to avoid lookahead bias.
+
+    :param aligned_data: A dictionary of DataFrames, where keys are asset symbols
+                         and values are the corresponding aligned price data.
+    :return: A DataFrame containing the standardized features.
+    """
+    # 1. Create a unified DataFrame of log returns for all assets
+    returns_df = pd.DataFrame({
+        symbol: np.log(df['Close']).diff()
+        for symbol, df in aligned_data.items()
+    })
+
+    # 2. Calculate the four core features
+    # Feature 1: 20-day Realized Volatility (averaged across assets)
+    volatility = returns_df.rolling(window=20).std().mean(axis=1) * np.sqrt(252) # Annualized
+
+    # Feature 2: 21-day Momentum (averaged across assets)
+    momentum_21d = returns_df.rolling(window=21).sum().mean(axis=1)
+
+    # Feature 3: 63-day Momentum (averaged across assets)
+    momentum_63d = returns_df.rolling(window=63).sum().mean(axis=1)
+
+    # Feature 4: 63-day Average Pairwise Correlation
+    # Use the built-in rolling.corr() for efficiency and correctness
+    rolling_corr = returns_df.rolling(window=63).corr()
+    
+    # The result is a multi-index DF. Group by date and calculate the mean of the lower triangle.
+    avg_correlation = rolling_corr.groupby(level=0).apply(
+        lambda x: x.where(np.tril(np.ones(x.shape), k=-1).astype(bool)).stack().mean()
+    )
+    avg_correlation.name = 'avg_correlation'
+
+    # 3. Combine features into a single DataFrame
+    features = pd.DataFrame({
+        'volatility': volatility,
+        'momentum_21d': momentum_21d,
+        'momentum_63d': momentum_63d,
+        'avg_correlation': avg_correlation
+    }).dropna()
+
+    # 4. Standardize the features using a rolling window to prevent lookahead bias
+    rolling_mean = features.rolling(window=252, min_periods=63).mean()
+    rolling_std = features.rolling(window=252, min_periods=63).std()
+    
+    standardized_features = (features - rolling_mean) / rolling_std
+    
+    return standardized_features.dropna()

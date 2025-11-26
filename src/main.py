@@ -1,13 +1,12 @@
 from regime_detection.hidden_markov_model import HiddenMarkovModel
 from trading_strategy.moving_average_crossover import MovingAverageCrossover
-from trading_strategy.momentum_scorer import MomentumScorer
 from strategy_manager import StrategyManager
 from portfolio_manager import PortfolioManager
 
 if __name__ == "__main__":
     # --- General Configuration ---
-    symbols = ["VOO","VXUS","GLD","BND"] 
-    start_date = "2008-01-01" # Start later to ensure enough data for features
+    symbols = ["VOO","VXUS","GLD","BND","META"] 
+    start_date = "2000-01-01" # Start later to ensure enough data for features
     end_date = "2024-01-01"
 
     # Define macroeconomic indicators to use across all strategies
@@ -22,7 +21,7 @@ if __name__ == "__main__":
         'TEDRATE': 'ted_spread' # Liquidity
     }
 
-    # --- STRATEGY 1: HMM + Moving Average Crossover with Equal Weighting ---
+    # # --- STRATEGY 1: HMM + Moving Average Crossover with Equal Weighting ---
     # print("--- RUNNING STRATEGY 1: HMM + MA Crossover (Macro-Aware) ---")
     # signal_engine_1 = StrategyManager()
     # signal_engine_1.add_model("HMM", HiddenMarkovModel(n_components=4)) # Using 4 states for more nuance
@@ -39,7 +38,7 @@ if __name__ == "__main__":
     # portfolio_manager_1.run_portfolio_backtest()
 
 
-    # --- STRATEGY 2: Shu & Mulvey GBDT Strategy ---
+    # # --- STRATEGY 2: Shu & Mulvey GBDT Strategy ---
     # print("\n\n--- RUNNING STRATEGY 2: Shu & Mulvey GBDT Model ---")
     # # This strategy's logic is self-contained within the PortfolioManager,
     # # so we can use a blank StrategyManager.
@@ -55,85 +54,18 @@ if __name__ == "__main__":
     # )
     # portfolio_manager_2.run_portfolio_backtest()
 
+    # --- STRATEGY 3: Statistical Jump Model with Regime-Switched Risk Parity ---
+    print("\n\n--- RUNNING STRATEGY 3: Statistical Jump Model (SJM) Risk Parity ---")
+    # This strategy's logic is self-contained within the PortfolioManager,
+    # so we can use a blank StrategyManager.
+    signal_engine_3 = StrategyManager()
 
-    # --- STRATEGY 3: Defensive Momentum ---
-    # print("\n\n--- RUNNING STRATEGY 3: Defensive Momentum ---")
-    
-    # # The StrategyManager only needs to calculate momentum scores for all assets.
-    # signal_engine_3 = StrategyManager()
-    # signal_engine_3.add_strategy("Momentum", MomentumScorer(lookback_period=126))
-    
-    # portfolio_manager_3 = PortfolioManager(
-    #     symbols=symbols,
-    #     strategy_manager=signal_engine_3,
-    #     start_date=start_date,
-    #     end_date=end_date,
-    #     allocation_strategy="protective_momentum",
-    #     fred_series_to_fetch={} # No FRED data needed for this strategy
-    # )
-    # portfolio_manager_3.run_portfolio_backtest()
-
-
-    # --- STRATEGY 4: Aggressive Momentum ---
-    # print("\n\n--- RUNNING STRATEGY 4: Aggressive Momentum ---")
-    
-    # signal_engine_4 = StrategyManager()
-    # signal_engine_4.add_strategy("Momentum", MomentumScorer(lookback_period=126))
-    
-    # portfolio_manager_4 = PortfolioManager(
-    #     symbols=symbols,
-    #     strategy_manager=signal_engine_4,
-    #     start_date=start_date,
-    #     end_date=end_date,
-    #     allocation_strategy="aggressive_momentum",
-    #     fred_series_to_fetch={} # No FRED data needed for this strategy
-    # )
-    # portfolio_manager_4.run_portfolio_backtest()
-    
-    
-    #--- STRATEGY 5: Correlation-Aware Defensive Strategy ---
-    # print("\n\n--- RUNNING STRATEGY 5: Correlation-Aware Defensive Strategy ---")
-    
-    # signal_engine_5 = StrategyManager()
-    # signal_engine_5.add_strategy("Momentum", MomentumScorer(lookback_period=126))
-    
-    # portfolio_manager_5 = PortfolioManager(
-    #     symbols=symbols,
-    #     strategy_manager=signal_engine_5,
-    #     start_date=start_date,
-    #     end_date=end_date,
-    #     allocation_strategy="correlation_aware",
-    #     fred_series_to_fetch={}
-    # )
-    # portfolio_manager_5.run_portfolio_backtest()
-
-    # --- STRATEGY 6: Risk Parity Strategy ---
-    # print("\n\n--- RUNNING STRATEGY 6: Risk Parity ---")
-    
-    # signal_engine_6 = StrategyManager()
-    
-    # portfolio_manager_6 = PortfolioManager(
-    #     symbols=symbols,
-    #     strategy_manager=signal_engine_6,
-    #     start_date=start_date,
-    #     end_date=end_date,
-    #     allocation_strategy="risk_parity",
-    #     fred_series_to_fetch={}
-    # )
-    # portfolio_manager_6.run_portfolio_backtest()
-    
-    # --- STRATEGY 7: ML-Powered Dynamic Tilt ---
-    # print("\n\n--- RUNNING STRATEGY 7: ML-Powered Dynamic Tilt ---")
-    
-    # # This is a pure allocation strategy that uses an ML model internally.
-    # signal_engine_7 = StrategyManager()
-    
-    # portfolio_manager_7 = PortfolioManager(
-    #     symbols=symbols,
-    #     strategy_manager=signal_engine_7,
-    #     start_date=start_date,
-    #     end_date=end_date,
-    #     allocation_strategy="ml_dynamic_tilt",
-    #     fred_series_to_fetch=fred_series # This strategy requires macro data
-    # )
-    # portfolio_manager_7.run_portfolio_backtest()
+    portfolio_manager_3 = PortfolioManager(
+        symbols=symbols,
+        strategy_manager=signal_engine_3,
+        start_date=start_date,
+        end_date=end_date,
+        allocation_strategy="jump_model_risk_parity", # Use the new allocation strategy
+        fred_series_to_fetch=fred_series
+    )
+    portfolio_manager_3.run_portfolio_backtest()

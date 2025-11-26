@@ -13,7 +13,8 @@ class HiddenMarkovModel:
             n_components=n_components,
             covariance_type="diag",
             n_iter=100,
-            random_state=42
+            random_state=42,
+            init_params=""
         )
 
     def fit(self, X):

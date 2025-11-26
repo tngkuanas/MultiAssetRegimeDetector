@@ -55,26 +55,41 @@ class StrategyManager:
                 if macro_data is not None:
                     hmm_features.extend(macro_data.columns)
                 
-                # Ensure all features are present in X_train/X_test before using them
-                hmm_features = [f for f in hmm_features if f in X_train.columns]
+                # Ensure all features are present in preprocessed_data
+                hmm_features = [f for f in hmm_features if f in preprocessed_data.columns]
                 
                 scaler = StandardScaler()
-                X_train_scaled = scaler.fit_transform(X_train[hmm_features])
-                model.fit(X_train_scaled) # The one and only fit call for HMM
+                all_psignals = pd.Series(index=preprocessed_data.index)
 
-                # Predict on the test set for PSignal
-                X_test_scaled = scaler.transform(X_test[hmm_features])
-                test_preds = model.predict(X_test_scaled)
+                # Walk-forward training and prediction for HMM
+                train_window_size = 500 # Initial training window size
                 
-                # Determine favourable states by predicting on the training set
-                train_preds = model.predict(X_train_scaled)
-                X_train_with_states = X_train.copy()
-                X_train_with_states['State'] = train_preds
-                state_returns = X_train_with_states.groupby('State')["Returns"].mean()
-                favourable_states = state_returns[state_returns > 0].index.tolist()
+                for i in range(train_window_size, len(preprocessed_data)):
+                    # Define training and prediction data for the current window
+                    current_train_data = preprocessed_data.iloc[:i]
+                    current_predict_data = preprocessed_data.iloc[i:i+1] # Predict for the next day
+
+                    if current_predict_data.empty:
+                        break # No more data to predict
+
+                    X_train_scaled = scaler.fit_transform(current_train_data[hmm_features])
+                    model.fit(X_train_scaled)
+
+                    # Predict on the current training set to determine favourable states
+                    train_preds = model.predict(X_train_scaled)
+                    X_train_with_states = current_train_data.copy()
+                    X_train_with_states['State'] = train_preds
+                    state_returns = X_train_with_states.groupby('State')["Returns"].mean()
+                    favourable_states = state_returns[state_returns > 0].index.tolist()
+
+                    # Predict for the next day (X_test)
+                    X_predict_scaled = scaler.transform(current_predict_data[hmm_features])
+                    next_day_pred = model.predict(X_predict_scaled)[0]
+                    
+                    # Assign PSignal based on favourable states
+                    all_psignals.loc[current_predict_data.index[0]] = 1 if next_day_pred in favourable_states else 0
                 
-                psignal_series = pd.Series(test_preds, index=X_test.index).apply(lambda x: 1 if x in favourable_states else 0)
-                asset_data_with_signals.loc[psignal_series.index, "PSignal"] = psignal_series
+                asset_data_with_signals.loc[all_psignals.index, "PSignal"] = all_psignals
         else:
             asset_data_with_signals["PSignal"] = 1
         
