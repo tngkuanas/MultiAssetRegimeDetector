@@ -5,7 +5,7 @@ from portfolio_manager import PortfolioManager
 
 if __name__ == "__main__":
     # --- General Configuration ---
-    symbols = ["VOO","VXUS","GLD","BND","META"] 
+    symbols = ["VOO","VXUS","GLD","BND","GOOG"] 
     start_date = "2000-01-01" # Start later to ensure enough data for features
     end_date = "2024-01-01"
 
