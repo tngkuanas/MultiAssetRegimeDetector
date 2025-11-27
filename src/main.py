@@ -70,6 +70,8 @@ if __name__ == "__main__":
             hysteresis_period=sjm_params["hysteresis_period"],
             max_turnover=sjm_params["max_turnover"],
             vol_targets=sjm_params["vol_targets"],
+            n_states=sjm_params["n_states"],
+            jump_penalty=sjm_params["jump_penalty"],
         ),
         fred_series_to_fetch=fred_series,
     )

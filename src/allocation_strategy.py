@@ -126,10 +126,12 @@ class ShuMulveyAllocationStrategy(AllocationStrategy):
 class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
     requires_signals = False
     
-    def __init__(self, hysteresis_period=5, max_turnover=0.5, vol_targets=None):
+    def __init__(self, hysteresis_period=5, max_turnover=0.5, vol_targets=None, n_states=3, jump_penalty=100):
         self.hysteresis_period = hysteresis_period
         self.max_turnover = max_turnover
         self.vol_targets = vol_targets if vol_targets is not None else {0: 0.15, 1: 0.10, 2: 0.05}
+        self.n_states = n_states
+        self.jump_penalty = jump_penalty
 
     def get_weights(self, aligned_data, **kwargs):
         """
@@ -161,7 +163,7 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
                     weights_df.loc[date] = last_weights
                     continue
 
-                sjm = StatisticalJumpModel(n_states=3, jump_penalty=100)
+                sjm = StatisticalJumpModel(n_states=self.n_states, jump_penalty=self.jump_penalty)
                 regime_labels = sjm.fit(sjm_features)
 
                 stable_regimes = regime_labels.rolling(window=self.hysteresis_period).apply(lambda x: x.iloc[-1] if x.nunique() == 1 else np.nan, raw=False).ffill()

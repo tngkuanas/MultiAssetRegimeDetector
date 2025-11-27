@@ -15,9 +15,9 @@ def get_fred_data(series_ids, start_date, end_date):
         config = load_config()
         api_key = config.get("fred_api_key")
 
-        if not api_key or api_key == "YOUR_API_KEY":
+        if not api_key or api_key == "PASTE_YOUR_NEW_FRED_API_KEY_HERE":
             print(
-                "FRED API Key is not set in config.yaml. Skipping FRED data collection."
+                "Error: FRED API Key is not set in config.yaml. Please paste your key. Skipping FRED data collection."
             )
             return None
 
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     config = load_config()
     api_key = config.get("fred_api_key")
 
-    if not api_key or api_key == "YOUR_API_KEY":
+    if not api_key or api_key == "PASTE_YOUR_NEW_FRED_API_KEY_HERE":
         print("Warning: FRED_API_KEY not set in config.yaml. Example usage skipped.")
     else:
         series_to_fetch = config.get("fred_series", {})

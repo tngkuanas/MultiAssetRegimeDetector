@@ -5,4 +5,5 @@ pandas-datareader
 matplotlib
 yfinance
 hmmlearn
-fredapiPyYAML
+fredapi
+PyYAML
