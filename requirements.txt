@@ -7,3 +7,6 @@ yfinance
 hmmlearn
 fredapi
 PyYAML
+
+fastapi
+uvicorn[standard]
