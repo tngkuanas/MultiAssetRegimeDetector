@@ -25,7 +25,7 @@ class PortfolioManager:
     def _fetch_all_data(self):
         """Fetches historical data for all symbols."""
         print("Fetching market data for all assets...")
-        for symbol in self.symbols:
+        for symbol in self.symbols[:]:
             try:
                 self.raw_data[symbol] = get_data(symbol, self.start_date, self.end_date)
             except Exception as e:

@@ -126,9 +126,10 @@ class ShuMulveyAllocationStrategy(AllocationStrategy):
 class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
     requires_signals = False
     
-    def __init__(self, hysteresis_period=5, max_turnover=0.5):
+    def __init__(self, hysteresis_period=5, max_turnover=0.5, vol_targets=None):
         self.hysteresis_period = hysteresis_period
         self.max_turnover = max_turnover
+        self.vol_targets = vol_targets if vol_targets is not None else {0: 0.15, 1: 0.10, 2: 0.05}
 
     def get_weights(self, aligned_data, **kwargs):
         """
@@ -147,8 +148,6 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
 
         last_weights = np.array([1/len(symbols)] * len(symbols))
         
-        vol_targets = {0: 0.15, 1: 0.10, 2: 0.05}
-
         for date in weights_df.index:
             if date in rebalance_dates:
                 print(f"Rebalancing for month of {date.strftime('%Y-%m')}...")
@@ -173,7 +172,7 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
                     continue
                 
                 current_regime = int(stable_regimes.iloc[-1])
-                target_vol = vol_targets[current_regime]
+                target_vol = self.vol_targets[current_regime]
                 print(f"  - Current Stable Regime: {current_regime} | Target Volatility: {target_vol:.0%}")
 
                 historical_returns = pd.DataFrame({

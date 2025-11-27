@@ -1,9 +1,3 @@
-import sys
-import os
-
-# Add the 'src' directory to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from regime_detection.hidden_markov_model import HiddenMarkovModel
 from trading_strategy.moving_average_crossover import MovingAverageCrossover
 from strategy_manager import StrategyManager
@@ -75,6 +69,7 @@ if __name__ == "__main__":
         allocation_strategy=JumpModelRiskParityAllocationStrategy(
             hysteresis_period=sjm_params["hysteresis_period"],
             max_turnover=sjm_params["max_turnover"],
+            vol_targets=sjm_params["vol_targets"],
         ),
         fred_series_to_fetch=fred_series,
     )

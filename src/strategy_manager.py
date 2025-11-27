@@ -31,23 +31,28 @@ class StrategyManager:
         
         # --- Model Signal Generation ---
         if self.models:
-            # Assume one model for now
-            model_name, model = next(iter(self.models.items()))
+            all_psignals = pd.DataFrame(index=asset_data.index)
+            for model_name, model in self.models.items():
+                if hasattr(model, 'generate_psignal'):
+                    print(f"Generating PSignal using model: {model_name}")
+                    psignal = model.generate_psignal(asset_data, macro_data)
+                    all_psignals[f'PSignal_{model_name}'] = psignal
+                else:
+                    print(f"Warning: Model {model_name} does not have a 'generate_psignal' method. Skipping.")
             
-            # Check if the model has the standardized signal generation method
-            if hasattr(model, 'generate_psignal'):
-                print(f"Generating PSignal using model: {model_name}")
-                psignal = model.generate_psignal(asset_data, macro_data)
-                asset_data_with_signals['PSignal'] = psignal
+            # Combine signals with a logical AND
+            if not all_psignals.empty:
+                # Ensure all signals are boolean or 0/1
+                all_psignals.fillna(0, inplace=True)
+                asset_data_with_signals['PSignal'] = all_psignals.all(axis=1).astype(int)
             else:
-                print(f"Warning: Model {model_name} does not have a 'generate_psignal' method. Defaulting PSignal to 1.")
                 asset_data_with_signals["PSignal"] = 1
         else:
             # If no model is specified, default to a PSignal of 1 (always allow trading)
             asset_data_with_signals["PSignal"] = 1
         
         asset_data_with_signals['PSignal'] = asset_data_with_signals['PSignal'].fillna(0)
-        
+
         # --- Strategy Signal Generation ---
         # Assume one strategy for now
         strategy_name, strategy_instance = next(iter(self.strategies.items()))
@@ -57,4 +62,3 @@ class StrategyManager:
         
         asset_data_with_signals.dropna(inplace=True)
         return asset_data_with_signals
-
