@@ -9,6 +9,7 @@ import time
 from config_loader import load_config
 from portfolio_manager import PortfolioManager
 from allocation_strategy import JumpModelRiskParityAllocationStrategy
+from strategy_selector import get_portfolio_composition, select_strategy_version
 
 app = FastAPI()
 
@@ -53,14 +54,21 @@ def run_backtest_and_store_results(job_id: str):
     try:
         print(f"Starting backtest for job_id: {job_id}")
         config = load_config()
-        # ... (rest of the backtest logic is the same)
         symbols = config["symbols"]
         start_date = config["start_date"]
         end_date = config["end_date"]
         fred_series = config["fred_series"]
-        strategy_params = config["strategy_params"]
-
-        sjm_params = strategy_params["jump_model_risk_parity"]
+        
+        # --- Strategy Selection ---
+        asset_definitions = config.get("asset_definitions", {})
+        selection_rules = config.get("strategy_selection_rules", [])
+        
+        composition = get_portfolio_composition(symbols, asset_definitions)
+        version_name = select_strategy_version(composition, selection_rules)
+        
+        print(f"Selected strategy version: '{version_name}'")
+        sjm_params = config["strategy_versions"][version_name]
+        # --- End Strategy Selection ---
 
         portfolio_manager = PortfolioManager(
             symbols=symbols,

@@ -60,7 +60,7 @@ class PortfolioManager:
         self.symbols = list(self.aligned_data.keys())
 
     def _calculate_portfolio_performance(self, weights_df):
-        """Calculates daily and cumulative returns for the portfolio and a benchmark."""
+        """Calculates daily and cumulative returns for the portfolio and benchmarks."""
         print("Calculating portfolio and benchmark returns...")
         
         asset_returns = pd.DataFrame({s: self.aligned_data[s]['Close'].pct_change() for s in self.symbols})
@@ -72,7 +72,7 @@ class PortfolioManager:
         portfolio_daily_returns = (weights_df.shift(1) * asset_returns).sum(axis=1).dropna()
         cumulative_returns = (1 + portfolio_daily_returns).cumprod()
 
-        # --- BENCHMARK: Static Risk Parity (Monthly Rebalanced) ---
+        # --- BENCHMARK 1: Static Risk Parity (Monthly Rebalanced) ---
         print("  - Calculating static risk parity benchmark...")
         rp_weights_df = pd.DataFrame(index=asset_returns.index, columns=self.symbols).fillna(0.0)
         rebalance_dates = asset_returns.resample('BMS').first().index
@@ -95,7 +95,7 @@ class PortfolioManager:
         risk_parity_daily_returns = (rp_weights_df.shift(1) * asset_returns).sum(axis=1).dropna()
         risk_parity_cumulative_returns = (1 + risk_parity_daily_returns).cumprod()
 
-        # --- BENCHMARK: Monthly Rebalanced Equal Weight ---
+        # --- BENCHMARK 2: Monthly Rebalanced Equal Weight ---
         print("  - Calculating monthly rebalanced equal-weight benchmark...")
         ew_rebalanced_weights_df = pd.DataFrame(index=asset_returns.index, columns=self.symbols)
         equal_weight = np.array([1/num_assets] * num_assets)
@@ -124,7 +124,7 @@ class PortfolioManager:
         """Delegates weight determination to the allocation strategy object."""
         return self.allocation_strategy.get_weights(self.aligned_data, macro_data=self.macro_data)
 
-    def run_portfolio_backtest(self):
+    def run_portfolio_backtest(self, plot=False):
         """Main method to run the portfolio backtest."""
         print(f"\n--- Running Portfolio Backtest ({', '.join(self.symbols)}) ---")
         print(f"Allocation Strategy: {self.allocation_strategy.__class__.__name__}")
@@ -136,11 +136,18 @@ class PortfolioManager:
 
         if not self.symbols:
             print("No symbols remaining after data alignment. Backtest aborted.")
-            return
+            # Return empty results to prevent crash in optimizer
+            return pd.DataFrame(), pd.DataFrame()
 
         weights_df = self._get_allocation_weights()
+        if weights_df.empty:
+            print("Allocation strategy returned empty weights. Backtest aborted.")
+            return pd.DataFrame(), pd.DataFrame()
+            
         self._calculate_portfolio_performance(weights_df)
-        self.plot_performance()
+        
+        if plot:
+            self.plot_performance()
             
         return self.portfolio_returns, weights_df
 
@@ -148,6 +155,7 @@ class PortfolioManager:
 
     def sharpe_ratio(self, return_series, annualization_factor=252, risk_free_rate=0.0):
         """Calculates the annualized Sharpe Ratio."""
+        if return_series.std() == 0: return 0.0
         excess_returns = return_series - risk_free_rate / annualization_factor
         return np.sqrt(annualization_factor) * excess_returns.mean() / excess_returns.std()
 
@@ -155,6 +163,7 @@ class PortfolioManager:
         """Calculates the annualized Sortino Ratio."""
         excess_returns = return_series - risk_free_rate / annualization_factor
         downside_returns = excess_returns[excess_returns < 0]
+        if downside_returns.empty: return np.inf
         downside_std = downside_returns.std()
         if downside_std == 0:
             return np.inf
@@ -172,43 +181,35 @@ class PortfolioManager:
             print("Portfolio backtest did not generate returns data to plot.")
             return
             
-        strat_final = self.portfolio_returns['Strategy Cumulative'].iloc[-1]
-        risk_parity_final = self.portfolio_returns['Risk Parity Cumulative'].iloc[-1]
-        ew_rebalanced_final = self.portfolio_returns['Equal Weight Rebalanced Cumulative'].iloc[-1]
+        # Dynamically get all cumulative columns to plot
+        cumulative_cols = [col for col in self.portfolio_returns.columns if 'Cumulative' in col]
         
-        strat_sharpe = self.sharpe_ratio(self.portfolio_returns['Strategy Daily'])
-        risk_parity_sharpe = self.sharpe_ratio(self.portfolio_returns['Risk Parity Daily'])
-        ew_rebalanced_sharpe = self.sharpe_ratio(self.portfolio_returns['Equal Weight Rebalanced Daily'])
-
-        strat_sortino = self.sortino_ratio(self.portfolio_returns['Strategy Daily'])
-        risk_parity_sortino = self.sortino_ratio(self.portfolio_returns['Risk Parity Daily'])
-        ew_rebalanced_sortino = self.sortino_ratio(self.portfolio_returns['Equal Weight Rebalanced Daily'])
-
-        strat_mdd = self.max_drawdown(self.portfolio_returns['Strategy Cumulative'])
-        risk_parity_mdd = self.max_drawdown(self.portfolio_returns['Risk Parity Cumulative'])
-        ew_rebalanced_mdd = self.max_drawdown(self.portfolio_returns['Equal Weight Rebalanced Cumulative'])
-
+        # --- Performance Summary ---
         print("\n--- Performance Summary ---")
-        print(f"Strategy Final Cumulative Return: {strat_final:.2%}")
-        print(f"Strategy Annualized Sharpe Ratio: {strat_sharpe:.2f}")
-        print(f"Strategy Annualized Sortino Ratio: {strat_sortino:.2f}")
-        print(f"Strategy Maximum Drawdown: {strat_mdd:.2%}")
-        print("-" * 20)
-        print(f"Risk Parity Benchmark Final Cumulative Return: {risk_parity_final:.2%}")
-        print(f"Risk Parity Benchmark Annualized Sharpe Ratio: {risk_parity_sharpe:.2f}")
-        print(f"Risk Parity Benchmark Annualized Sortino Ratio: {risk_parity_sortino:.2f}")
-        print(f"Risk Parity Benchmark Maximum Drawdown: {risk_parity_mdd:.2%}")
-        print("-" * 20)
-        print(f"Equal Weight Rebalanced Benchmark Final Cumulative Return: {ew_rebalanced_final:.2%}")
-        print(f"Equal Weight Rebalanced Benchmark Annualized Sharpe Ratio: {ew_rebalanced_sharpe:.2f}")
-        print(f"Equal Weight Rebalanced Benchmark Annualized Sortino Ratio: {ew_rebalanced_sortino:.2f}")
-        print(f"Equal Weight Rebalanced Benchmark Maximum Drawdown: {ew_rebalanced_mdd:.2%}")
+        for col in cumulative_cols:
+            name = col.replace(' Cumulative', '')
+            daily_col = name + ' Daily'
+            
+            final_return = self.portfolio_returns[col].iloc[-1]
+            sharpe = self.sharpe_ratio(self.portfolio_returns[daily_col])
+            sortino = self.sortino_ratio(self.portfolio_returns[daily_col])
+            mdd = self.max_drawdown(self.portfolio_returns[col])
+            
+            print(f"--- {name} ---")
+            print(f"Final Cumulative Return: {final_return:.2%}")
+            print(f"Annualized Sharpe Ratio: {sharpe:.2f}")
+            print(f"Annualized Sortino Ratio: {sortino:.2f}")
+            print(f"Maximum Drawdown: {mdd:.2%}")
 
+        # --- Plotting ---
         plt.style.use('seaborn-v0_8-darkgrid')
         plt.figure(figsize=(14, 7))
-        self.portfolio_returns['Strategy Cumulative'].plot(label='Strategy', lw=2.5, color='blue')
-        self.portfolio_returns['Risk Parity Cumulative'].plot(label='Benchmark (Static Risk Parity)', lw=1.5, linestyle=':', color='orange')
-        self.portfolio_returns['Equal Weight Rebalanced Cumulative'].plot(label='Benchmark (Monthly Rebalanced Equal Weight)', lw=1.5, linestyle='-.', color='green')
+        for col in cumulative_cols:
+            name = col.replace(' Cumulative', '')
+            lw = 2.5 if name == 'Strategy' else 1.5
+            ls = '-' if name == 'Strategy' else ':'
+            self.portfolio_returns[col].plot(label=name, lw=lw, linestyle=ls)
+            
         plt.title(f"Performance: '{self.allocation_strategy.__class__.__name__}' vs. Benchmarks", fontsize=16)
         plt.xlabel("Date")
         plt.ylabel("Cumulative Returns")

@@ -10,3 +10,6 @@ PyYAML
 
 fastapi
 uvicorn[standard]
+
+scikit-optimize
+pyyaml
