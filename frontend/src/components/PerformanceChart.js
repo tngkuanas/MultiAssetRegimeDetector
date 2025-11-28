@@ -1,12 +1,12 @@
 import React from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Heading, Box } from '@chakra-ui/react';
 
-function PerformanceChart({ data }) {
+const PerformanceChart = React.memo(({ data }) => {
   if (!data || data.length === 0) {
     return null;
   }
 
-  // Ensure data is sorted by Date and format if necessary
   const processedData = data.map(item => ({
     Date: item.Date,
     Strategy: item['Strategy Cumulative'],
@@ -15,8 +15,8 @@ function PerformanceChart({ data }) {
   }));
 
   return (
-    <div className="performance-chart">
-      <h3>Cumulative Returns</h3>
+    <Box className="performance-chart" width="100%">
+      <Heading as="h3" size="md" mb={4}>Cumulative Returns</Heading>
       <ResponsiveContainer width="100%" height={400}>
         <LineChart data={processedData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" />
@@ -29,8 +29,8 @@ function PerformanceChart({ data }) {
           <Line type="monotone" dataKey="EqualWeight" stroke="#ffc658" />
         </LineChart>
       </ResponsiveContainer>
-    </div>
+    </Box>
   );
-}
+});
 
 export default PerformanceChart;

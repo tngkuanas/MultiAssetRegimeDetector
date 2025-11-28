@@ -4,14 +4,12 @@ import matplotlib.pyplot as plt
 
 from data_collection import get_data
 from data_collection_fred import get_fred_data
-from strategy_manager import StrategyManager
 from allocation_strategy import AllocationStrategy
 
 
 class PortfolioManager:
-    def __init__(self, symbols, strategy_manager: StrategyManager, allocation_strategy: AllocationStrategy, start_date, end_date, fred_series_to_fetch=None):
+    def __init__(self, symbols, allocation_strategy: AllocationStrategy, start_date, end_date, fred_series_to_fetch=None):
         self.symbols = symbols
-        self.strategy_manager = strategy_manager
         self.start_date = start_date
         self.end_date = end_date
         self.asset_data_with_signals = {}
@@ -44,18 +42,6 @@ class PortfolioManager:
             print("Fetching macroeconomic data...")
             self.macro_data = get_fred_data(series_ids=self.fred_series_to_fetch, start_date=self.start_date, end_date=self.end_date)
         return self.macro_data
-
-    def _generate_all_signals(self):
-        """Generates trading signals for each asset using the StrategyManager if required by the allocation strategy."""
-        if not self.allocation_strategy.requires_signals:
-            print(f"Bypassing signal generation as it's not required by '{self.allocation_strategy.__class__.__name__}'.")
-            self.asset_data_with_signals = self.raw_data
-            return
-
-        print("Generating signals for all assets...")
-        for symbol, data in self.raw_data.items():
-            print(f"  - Generating signals for {symbol}")
-            self.asset_data_with_signals[symbol] = self.strategy_manager.process(data.copy(), self.macro_data)
 
     def _align_data(self):
         """Aligns all asset data to a common date range."""
@@ -145,7 +131,7 @@ class PortfolioManager:
         
         self._fetch_all_data()
         self._fetch_macro_data()
-        self._generate_all_signals()
+        self.asset_data_with_signals = self.raw_data
         self._align_data()
 
         if not self.symbols:

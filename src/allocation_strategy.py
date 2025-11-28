@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 import pandas as pd
 import numpy as np
 from scipy.optimize import minimize
-from regime_detection.shu_mulvey_model import ShuMulveyModel
 from regime_detection.statistical_jump_model import StatisticalJumpModel
 from feature_engineering import calculate_jump_model_features
 
@@ -20,108 +19,6 @@ class AllocationStrategy(ABC):
                  and portfolio weights as values.
         """
         pass
-
-class EqualWeightAllocationStrategy(AllocationStrategy):
-    def get_weights(self, aligned_data, **kwargs):
-        """
-        Determines daily portfolio weights based on equal weighting for active signals.
-        """
-        print("Determining portfolio weights using 'equal_weight' strategy...")
-        symbols = list(aligned_data.keys())
-        weights_df = pd.DataFrame(index=next(iter(aligned_data.values())).index)
-        for date in weights_df.index:
-            active_assets = [s for s, df in aligned_data.items() if df.loc[date, 'Signal'] > 0 and df.loc[date, 'PSignal'] == 1]
-            if active_assets:
-                weight = 1 / len(active_assets)
-                for s in symbols:
-                    weights_df.loc[date, s] = weight if s in active_assets else 0
-            else:
-                for s in symbols:
-                    weights_df.loc[date, s] = 0
-        return weights_df.fillna(0)
-
-class ShuMulveyAllocationStrategy(AllocationStrategy):
-    requires_signals = False
-
-    def get_weights(self, aligned_data, **kwargs):
-        """
-        Determines weights using a walk-forward version of the Shu-Mulvey GBDT model
-        and mean-variance optimization. Rebalances and retrains monthly.
-        """
-        print("Determining portfolio weights using 'shu_mulvey' walk-forward strategy...")
-        
-        symbols = list(aligned_data.keys())
-        macro_data = kwargs.get('macro_data')
-        
-        weights_df = pd.DataFrame(index=next(iter(aligned_data.values())).index, columns=symbols).fillna(0.0)
-        
-        min_training_period = pd.DateOffset(years=1)
-        first_rebalance_date = weights_df.index[0] + min_training_period
-        rebalance_dates = pd.date_range(start=first_rebalance_date, end=weights_df.index[-1], freq='BMS')
-
-        last_weights = np.array([1/len(symbols)] * len(symbols))
-
-        for date in weights_df.index:
-            if date in rebalance_dates:
-                print(f"Rebalancing for month of {date.strftime('%Y-%m')}...")
-                
-                historical_data = {s: df.loc[:date] for s, df in aligned_data.items()}
-                historical_macro_data = macro_data.loc[:date] if macro_data is not None else None
-                
-                model = ShuMulveyModel(assets_data=historical_data, macro_data=historical_macro_data)
-                model.fit()
-
-                regime_probs = model.predict_proba()
-
-                regime_returns = {}
-                for asset in symbols:
-                    returns = np.log(historical_data[asset]['Close']).diff()
-                    aligned_returns, aligned_regimes = returns.align(model.regime_labels[asset], join='inner')
-                    regime_data = pd.DataFrame({'returns': aligned_returns, 'regime': aligned_regimes})
-                    regime_returns[asset] = regime_data.groupby('regime')['returns'].mean()
-
-                expected_returns = []
-                for asset in symbols:
-                    if not regime_probs.get(asset):
-                        exp_ret = 0
-                    else:
-                        probs = pd.Series(regime_probs[asset])
-                        cond_returns = regime_returns.get(asset, pd.Series())
-                        exp_ret = probs.dot(cond_returns.reindex(probs.index).fillna(0.0))
-                    expected_returns.append(exp_ret)
-
-                returns_subset = pd.DataFrame({s: np.log(df['Close']).diff() for s, df in historical_data.items()}).iloc[-90:]
-                cov_matrix = returns_subset.cov() * 252
-
-                num_assets = len(symbols)
-                args = (np.array(expected_returns), cov_matrix)
-                constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-                bounds = tuple((0, 1) for _ in range(num_assets))
-                
-                result = minimize(self._neg_sharpe, num_assets*[1./num_assets], args=args,
-                                  method='SLSQP', bounds=bounds, constraints=constraints)
-                
-                if result.success:
-                    last_weights = result.x
-                else:
-                    print(f"  - Optimizer failed on {date}, holding previous weights.")
-
-            weights_df.loc[date] = last_weights
-
-        weights_df.replace(0, np.nan, inplace=True)
-        weights_df.ffill(inplace=True)
-        weights_df.fillna(0, inplace=True)
-
-        return weights_df
-
-    def _neg_sharpe(self, weights, expected_returns, cov_matrix, risk_free_rate=0.02):
-        """Helper for the optimizer: calculates the negative Sharpe ratio."""
-        portfolio_return = np.sum(expected_returns * weights) * 252
-        portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-        if portfolio_volatility == 0:
-            return 0
-        sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility
-        return -sharpe_ratio
 
 class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
     requires_signals = False

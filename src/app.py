@@ -8,7 +8,6 @@ import time
 # Import your existing backtesting logic
 from config_loader import load_config
 from portfolio_manager import PortfolioManager
-from strategy_manager import StrategyManager
 from allocation_strategy import JumpModelRiskParityAllocationStrategy
 
 app = FastAPI()
@@ -61,12 +60,10 @@ def run_backtest_and_store_results(job_id: str):
         fred_series = config["fred_series"]
         strategy_params = config["strategy_params"]
 
-        signal_engine_3 = StrategyManager()
         sjm_params = strategy_params["jump_model_risk_parity"]
 
         portfolio_manager = PortfolioManager(
             symbols=symbols,
-            strategy_manager=signal_engine_3,
             start_date=start_date,
             end_date=end_date,
             allocation_strategy=JumpModelRiskParityAllocationStrategy(
