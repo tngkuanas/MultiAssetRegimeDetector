@@ -20,9 +20,12 @@ import DatePicker from 'react-datepicker';
 
 const Sidebar = ({ onStartBacktest, jobStatus }) => {
   const theme = useTheme();
-  // Dates are now stored as Date objects for the datepicker, but passed as strings
-  const [startDate, setStartDate] = useState(new Date('2018-01-01'));
-  const [endDate, setEndDate] = useState(new Date('2024-01-01'));
+  const initialEndDate = new Date();
+  const initialStartDate = new Date();
+  initialStartDate.setFullYear(initialEndDate.getFullYear() - 5);
+
+  const [startDate, setStartDate] = useState(initialStartDate);
+  const [endDate, setEndDate] = useState(initialEndDate);
   const [symbols, setSymbols] = useState('VOO, VXUS, GLD, BND, GOOG');
 
   const isLoading = jobStatus === 'in_progress';
