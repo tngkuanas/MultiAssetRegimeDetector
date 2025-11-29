@@ -1,120 +1,76 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import BacktestRunner from './components/BacktestRunner';
-import ResultsDisplay from './components/ResultsDisplay';
-import PerformanceChart from './components/PerformanceChart';
-import {
-  Flex,
-  VStack,
-  Heading,
-  Text,
-  ProgressCircle,
-  Container,
-  Alert,
-  AlertTitle,
-  AlertDescription,
+import { 
+  Box, 
+  Flex, 
+  VStack, 
+  Heading, 
+  Text, 
+  Spinner,
+  Icon
 } from '@chakra-ui/react';
-import { Toaster, toaster } from './components/ui/toaster'; // Adjust path if needed
-import './App.css'; // Keep custom styles if any
 
-function getDownsampledData(fullData, maxPoints = 500) {
-  if (!fullData || fullData.length <= maxPoints) {
-    return fullData;
-  }
+import Sidebar from './components/layout/Sidebar';
+import MainContent from './components/layout/MainContent';
+import Dashboard from './components/dashboard/Dashboard'; 
+import { FaCogs } from 'react-icons/fa';
 
-  const step = Math.ceil(fullData.length / maxPoints);
-  const downsampled = [];
-  for (let i = 0; i < fullData.length; i += step) {
-    downsampled.push(fullData[i]);
-  }
-  return downsampled;
-}
+import "react-datepicker/dist/react-datepicker.css";
+import "./datepicker-theme.css";
+import './App.css';
 
-function AppContent() {
+function App() {
   const [jobId, setJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState('idle'); // idle, in_progress, completed, error
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
 
   const pollResults = useCallback((currentJobId) => {
-    let interval;
-    interval = setInterval(async () => {
+    const interval = setInterval(async () => {
       try {
-        const response = await axios.get(`/results/${currentJobId}`);
+        const response = await axios.get(`http://localhost:8000/results/${currentJobId}`);
         if (response.data.status === 'completed') {
           setResults(response.data.result);
           setJobStatus('completed');
-          toaster.create({
-            title: 'Backtest Completed',
-            description: 'Results are ready!',
-            status: 'success',
-            duration: 5000,
-            isClosable: true,
-          });
           clearInterval(interval);
         } else if (response.data.status === 'error') {
-          const errorMessage = response.data.error || "An unknown error occurred during backtest.";
-          setError(errorMessage);
+          setError(response.data.error || "An unknown error occurred.");
           setJobStatus('error');
-          toaster.create({
-            title: 'Backtest Error',
-            description: errorMessage,
-            status: 'error',
-            duration: 9000,
-            isClosable: true,
-          });
           clearInterval(interval);
         }
       } catch (err) {
         console.error("Error polling results:", err);
-        const errorMessage = err.response?.data?.detail || "Error fetching results. Please check the backend API.";
-        setError(errorMessage);
+        setError(err.response?.data?.detail || "Error fetching results.");
         setJobStatus('error');
-        toaster.create({
-          title: 'Error',
-          description: errorMessage,
-          status: 'error',
-          duration: 9000,
-          isClosable: true,
-        });
         clearInterval(interval);
       }
-    }, 3000); // Poll every 3 seconds
-    return () => clearInterval(interval); // Cleanup function
+    }, 3000);
+    return () => clearInterval(interval);
   }, []);
 
-  const startBacktest = useCallback(async () => {
+  const startBacktest = useCallback(async ({ symbols, startDate, endDate }) => {
     try {
       setJobStatus('in_progress');
       setResults(null);
       setError(null);
-      toaster.create({
-        title: 'Backtest Started',
-        description: 'Initiating backtest, this may take a moment.',
-        status: 'info',
-        duration: 3000,
-        isClosable: true,
-      });
+      setJobId(null);
 
-      const response = await axios.post('/run_strategy_3');
+      const payload = {
+        symbols: symbols.split(',').map(s => s.trim()).filter(Boolean),
+        start_date: startDate,
+        end_date: endDate,
+      };
+
+      const response = await axios.post('http://localhost:8000/run_backtest', payload);
       const newJobId = response.data.job_id;
       setJobId(newJobId);
     } catch (err) {
       console.error("Error starting backtest:", err);
-      const errorMessage = err.response?.data?.detail || "Failed to start backtest. Please check the backend API.";
-      setError(errorMessage);
+      setError(err.response?.data?.detail || "Failed to start backtest.");
       setJobStatus('error');
-      toaster.create({
-        title: 'Error',
-        description: errorMessage,
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
     }
   }, []);
 
-  // Effect to clean up interval if component unmounts
   useEffect(() => {
     if (jobStatus === 'in_progress' && jobId) {
       const cleanup = pollResults(jobId);
@@ -122,70 +78,51 @@ function AppContent() {
     }
   }, [jobStatus, jobId, pollResults]);
 
-
-  const downsampledCumulativeReturns = results ? getDownsampledData(results.cumulative_returns) : null;
+  const renderContent = () => {
+    switch (jobStatus) {
+      case 'idle':
+        return (
+          <Flex justify="center" align="center" h="full" opacity={0.3} direction="column">
+            <Icon as={FaCogs} w={24} h={24} color="brand.700" />
+            <Heading size="lg" mt={6}>READY TO ANALYZE</Heading>
+            <Text color="brand.200">Configure portfolio and date range in the sidebar.</Text>
+          </Flex>
+        );
+      case 'in_progress':
+        return (
+          <Flex justify="center" align="center" h="full" direction="column" bg="rgba(0,0,0,0.5)" backdropFilter="blur(4px)">
+            <Spinner thickness="4px" speed="0.65s" color="brand.red" emptyColor="brand.700" size="xl" />
+            <Heading size="md" mt={6} letterSpacing="wider">RUNNING SIMULATION...</Heading>
+          </Flex>
+        );
+      case 'error':
+        return (
+          <Flex justify="center" align="center" h="full" direction="column">
+            <Heading size="lg" color="brand.danger">ANALYSIS FAILED</Heading>
+            <Text fontFamily="mono" color="brand.200" mt={4} bg="brand.800" p={4} borderRadius="md" maxW="80%">
+              {error}
+            </Text>
+          </Flex>
+        );
+      case 'completed':
+        return results ? <Dashboard results={results} /> : null;
+      default:
+        return null;
+    }
+  };
 
   return (
-    <Container maxW="container.xl" p={4}>
-      <Flex direction="column" align="center" justify="center" minH="100vh" py={8}>
-        <VStack spacing={8} width="full">
-          <Heading as="h1" size="xl" color="teal.500">
-            Backtesting Engine - Strategy 3
-          </Heading>
-
-          <BacktestRunner onStartBacktest={startBacktest} jobStatus={jobStatus} />
-
-          {jobStatus === 'in_progress' && (
-            <Flex direction="column" align="center" mt={4}>
-              <ProgressCircle.Root value={null}>
-                <ProgressCircle.Circle css={{ "--thickness": "4px" }}>
-                  <ProgressCircle.Track />
-                  <ProgressCircle.Range stroke="teal.500" />
-                </ProgressCircle.Circle>
-              </ProgressCircle.Root>
-              <Text mt={2}>Backtest in progress... Job ID: {jobId}</Text>
-              <Text fontSize="sm" color="gray.500">Please wait, this may take a few minutes.</Text>
-            </Flex>
-          )}
-
-          {error && (
-            <Alert status="error" variant="left-accent" mt={4}>
-              <Alert.Indicator />
-              <AlertTitle mr={2}>Backtest Failed!</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {results && jobStatus === 'completed' && (
-            <VStack spacing={6} width="full" mt={8}>
-              <Heading as="h2" size="lg" color="teal.600">
-                Results Overview
-              </Heading>
-              <ResultsDisplay summary={results.summary} />
-              {downsampledCumulativeReturns && downsampledCumulativeReturns.length > 0 ? (
-                <PerformanceChart data={downsampledCumulativeReturns} />
-              ) : (
-                <Alert status="warning" mt={4}>
-                  <Alert.Indicator />
-                  <AlertTitle mr={2}>No Chart Data</AlertTitle>
-                  <AlertDescription>Could not generate chart. Data might be insufficient.</AlertDescription>
-                </Alert>
-              )}
-            </VStack>
-          )}
-        </VStack>
-      </Flex>
-    </Container>
-  );
-}
-
-function App() {
-  return (
-    <>
-      <AppContent />
-      <Toaster />
-    </>
+    <Box position="relative" w="100vw" h="100vh" overflow="hidden" bg="black" sx={{'--grid-pattern-color': 'rgba(255, 255, 255, 0.05)'}}>
+      {/* The subtle grid background is applied here */}
+      <Box position="absolute" inset="0" className="grid-background" />
+      
+      <Sidebar onStartBacktest={startBacktest} jobStatus={jobStatus} />
+      <MainContent>
+        {renderContent()}
+      </MainContent>
+    </Box>
   );
 }
 
 export default App;
+

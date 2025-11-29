@@ -120,10 +120,6 @@ class PortfolioManager:
             'Equal Weight Rebalanced Cumulative': ew_rebalanced_cumulative_returns
         }).dropna()
 
-    def _get_allocation_weights(self):
-        """Delegates weight determination to the allocation strategy object."""
-        return self.allocation_strategy.get_weights(self.aligned_data, macro_data=self.macro_data)
-
     def run_portfolio_backtest(self, plot=False):
         """Main method to run the portfolio backtest."""
         print(f"\n--- Running Portfolio Backtest ({', '.join(self.symbols)}) ---")
@@ -137,19 +133,20 @@ class PortfolioManager:
         if not self.symbols:
             print("No symbols remaining after data alignment. Backtest aborted.")
             # Return empty results to prevent crash in optimizer
-            return pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame(), pd.Series()
 
-        weights_df = self._get_allocation_weights()
+        weights_df, regime_labels = self.allocation_strategy.get_weights(self.aligned_data, macro_data=self.macro_data)
+        
         if weights_df.empty:
             print("Allocation strategy returned empty weights. Backtest aborted.")
-            return pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame(), pd.Series()
             
         self._calculate_portfolio_performance(weights_df)
         
         if plot:
             self.plot_performance()
             
-        return self.portfolio_returns, weights_df
+        return self.portfolio_returns, weights_df, regime_labels
 
     # --- Performance and Plotting ---
 

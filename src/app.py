@@ -1,7 +1,8 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import uuid
 import time
 
@@ -13,11 +14,31 @@ from strategy_selector import get_portfolio_composition, select_strategy_version
 
 app = FastAPI()
 
+# --- CORS Middleware ---
+# Allows the frontend (running on localhost:3000) to communicate with the backend.
+origins = [
+    "http://localhost:3000",
+    "http://localhost",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 # --- In-Memory Storage for Job Results ---
 results_store: Dict[str, Dict[str, Any]] = {}
 
 
 # --- Pydantic Models for API ---
+
+class BacktestRequest(BaseModel):
+    symbols: List[str]
+    start_date: str
+    end_date: str
 
 class BacktestSummary(BaseModel):
     strategy_final_return: float
@@ -33,20 +54,24 @@ class BacktestSummary(BaseModel):
     equal_weight_sortino_ratio: float
     equal_weight_max_drawdown: float
 
-class BacktestResult(BaseModel):
+class DashboardData(BaseModel):
     summary: BacktestSummary
     cumulative_returns: list[Dict[str, Any]]
+    regime_map_data: list[Dict[str, Any]]
+    allocation_data: list[Dict[str, Any]]
+    current_regime: str
+    regime_confidence: float
 
 class Job(BaseModel):
     job_id: str
     status: str
-    result: Optional[BacktestResult] = None
+    result: Optional[DashboardData] = None
     error: Optional[str] = None
 
 
 # --- Helper Function to run the backtest ---
 
-def run_backtest_and_store_results(job_id: str):
+def run_backtest_and_store_results(job_id: str, request: BacktestRequest):
     """
     A wrapper function that runs the backtest and stores the result.
     This function is designed to be run in the background.
@@ -54,9 +79,10 @@ def run_backtest_and_store_results(job_id: str):
     try:
         print(f"Starting backtest for job_id: {job_id}")
         config = load_config()
-        symbols = config["symbols"]
-        start_date = config["start_date"]
-        end_date = config["end_date"]
+        # Use request data instead of config for primary backtest params
+        symbols = request.symbols
+        start_date = request.start_date
+        end_date = request.end_date
         fred_series = config["fred_series"]
         
         # --- Strategy Selection ---
@@ -66,7 +92,7 @@ def run_backtest_and_store_results(job_id: str):
         composition = get_portfolio_composition(symbols, asset_definitions)
         version_name = select_strategy_version(composition, selection_rules)
         
-        print(f"Selected strategy version: '{version_name}'")
+        print(f"Selected strategy version: '{version_name}' for symbols: {', '.join(symbols)}")
         sjm_params = config["strategy_versions"][version_name]
         # --- End Strategy Selection ---
 
@@ -84,9 +110,10 @@ def run_backtest_and_store_results(job_id: str):
             fred_series_to_fetch=fred_series,
         )
         
-        portfolio_returns, _ = portfolio_manager.run_portfolio_backtest()
+        # NOTE: This will require changes in portfolio_manager to return regime_labels
+        portfolio_returns, weights_df, regime_labels = portfolio_manager.run_portfolio_backtest(plot=False)
 
-        # --- Format the results ---
+        # --- Format the results for the new dashboard ---
         summary = BacktestSummary(
             strategy_final_return=portfolio_returns['Strategy Cumulative'].iloc[-1],
             strategy_sharpe_ratio=portfolio_manager.sharpe_ratio(portfolio_returns['Strategy Daily']),
@@ -102,12 +129,34 @@ def run_backtest_and_store_results(job_id: str):
             equal_weight_max_drawdown=portfolio_manager.max_drawdown(portfolio_returns['Equal Weight Rebalanced Cumulative']),
         )
 
-        chart_data = portfolio_returns[['Strategy Cumulative', 'Risk Parity Cumulative', 'Equal Weight Rebalanced Cumulative']].reset_index()
-        chart_data['Date'] = chart_data['Date'].dt.strftime('%Y-%m-%d')
+        # Format cumulative returns for chart
+        cumulative_returns_chart_data = portfolio_returns[['Strategy Cumulative', 'Risk Parity Cumulative', 'Equal Weight Rebalanced Cumulative']].reset_index()
+        cumulative_returns_chart_data['Date'] = cumulative_returns_chart_data['Date'].dt.strftime('%Y-%m-%d')
         
-        result_data = BacktestResult(
+        # Format regime data for regime map
+        regime_map_data_df = pd.DataFrame({
+            'Date': regime_labels.index,
+            'regime': regime_labels.values,
+            'value': portfolio_returns.loc[regime_labels.index]['Strategy Cumulative']
+        })
+        regime_map_data_df['Date'] = regime_map_data_df['Date'].dt.strftime('%Y-%m-%d')
+
+        # Format allocation data
+        final_weights = weights_df.iloc[-1]
+        allocation_data = [{'asset': symbol, 'weight': weight * 100} for symbol, weight in final_weights.items()]
+
+        # Placeholder for current regime text and confidence
+        regime_map = {0: "BULLISH QUIET", 1: "NEUTRAL", 2: "BEARISH VOLATILE"}
+        current_regime_code = int(regime_labels.iloc[-1])
+        current_regime_text = regime_map.get(current_regime_code, "UNKNOWN")
+        
+        result_data = DashboardData(
             summary=summary,
-            cumulative_returns=chart_data.to_dict(orient='records')
+            cumulative_returns=cumulative_returns_chart_data.to_dict(orient='records'),
+            regime_map_data=regime_map_data_df.to_dict(orient='records'),
+            allocation_data=allocation_data,
+            current_regime=current_regime_text,
+            regime_confidence=0.95 # Placeholder value
         )
         
         results_store[job_id].update({"status": "completed", "result": result_data})
@@ -120,10 +169,10 @@ def run_backtest_and_store_results(job_id: str):
 
 # --- API Endpoints ---
 
-@app.post("/run_strategy_3", response_model=Job)
-def run_backtest_endpoint(background_tasks: BackgroundTasks):
+@app.post("/run_backtest", response_model=Job)
+def run_backtest_endpoint(request: BacktestRequest, background_tasks: BackgroundTasks):
     """
-    Kicks off the backtest for Strategy 3 in the background.
+    Kicks off the backtest in the background.
     """
     job_id = str(uuid.uuid4())
     results_store[job_id] = {
@@ -132,7 +181,7 @@ def run_backtest_endpoint(background_tasks: BackgroundTasks):
         "result": None, 
         "error": None
     }
-    background_tasks.add_task(run_backtest_and_store_results, job_id)
+    background_tasks.add_task(run_backtest_and_store_results, job_id, request)
     return results_store[job_id]
 
 @app.get("/results/{job_id}", response_model=Job)

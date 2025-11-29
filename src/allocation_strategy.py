@@ -34,12 +34,13 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
         """
         Determines weights using the Statistical Jump Model and regime-switched risk parity.
         Rebalances and retrains monthly, targeting a specific portfolio volatility based on the active regime.
+        Returns both the final weights and the regime labels for the full period.
         """
         print("Determining portfolio weights using 'jump_model_risk_parity' walk-forward strategy...")
         
         symbols = list(aligned_data.keys())
-        
-        weights_df = pd.DataFrame(index=next(iter(aligned_data.values())).index, columns=symbols).fillna(0.0)
+        full_index = next(iter(aligned_data.values())).index
+        weights_df = pd.DataFrame(index=full_index, columns=symbols).fillna(0.0)
         
         min_training_period = pd.DateOffset(years=1)
         first_rebalance_date = weights_df.index[0] + min_training_period
@@ -47,6 +48,7 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
 
         last_weights = np.array([1/len(symbols)] * len(symbols))
         
+        # This loop calculates the weights on a walk-forward basis
         for date in weights_df.index:
             if date in rebalance_dates:
                 print(f"Rebalancing for month of {date.strftime('%Y-%m')}...")
@@ -56,7 +58,6 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
                 sjm_features = calculate_jump_model_features(historical_data)
                 
                 if sjm_features.empty:
-                    print(f"  - Not enough data for feature calculation on {date}. Holding previous weights.")
                     weights_df.loc[date] = last_weights
                     continue
 
@@ -66,13 +67,17 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
                 stable_regimes = regime_labels.rolling(window=self.hysteresis_period).apply(lambda x: x.iloc[-1] if x.nunique() == 1 else np.nan, raw=False).ffill()
                 
                 if pd.isna(stable_regimes.iloc[-1]):
-                    print(f"  - Regime is unstable on {date}. Holding previous weights.")
                     weights_df.loc[date] = last_weights
                     continue
                 
                 current_regime = int(stable_regimes.iloc[-1])
-                target_vol = self.vol_targets[current_regime]
-                print(f"  - Current Stable Regime: {current_regime} | Target Volatility: {target_vol:.0%}")
+                target_vol = self.vol_targets.get(current_regime)
+                
+                # Fallback if regime code is unexpected
+                if target_vol is None:
+                    print(f"  - Warning: No vol target for regime {current_regime}. Using last weights.")
+                    weights_df.loc[date] = last_weights
+                    continue
 
                 historical_returns = pd.DataFrame({
                     symbol: np.log(df['Close']).diff()
@@ -80,40 +85,32 @@ class JumpModelRiskParityAllocationStrategy(AllocationStrategy):
                 })
                 
                 aligned_returns, aligned_regimes = historical_returns.align(regime_labels, join='inner', axis=0)
-                
                 regime_specific_returns = aligned_returns[aligned_regimes == current_regime]
                 
-                if len(regime_specific_returns) < 30:
-                    print(f"  - Not enough data in regime {current_regime} for covariance. Using full history.")
-                    cov_matrix = aligned_returns.iloc[-90:].cov() * 252
-                else:
-                    cov_matrix = regime_specific_returns.cov() * 252
+                cov_matrix = aligned_returns.iloc[-90:].cov() * 252 if len(regime_specific_returns) < 30 else regime_specific_returns.cov() * 252
                 
-                num_assets = len(symbols)
-                initial_weights = last_weights
-                
-                constraints = [
-                    {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
-                    {'type': 'ineq', 'fun': lambda w: self.max_turnover - np.sum(np.abs(w - last_weights))}
-                ]
-                
-                bounds = tuple((0.0, 1.0) for _ in range(num_assets))
-                
-                result = minimize(self._volatility_objective, initial_weights,
+                result = minimize(self._volatility_objective, last_weights,
                                   args=(cov_matrix, target_vol),
                                   method='SLSQP',
-                                  bounds=bounds,
-                                  constraints=constraints)
+                                  bounds=tuple((0.0, 1.0) for _ in symbols),
+                                  constraints=[{'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
+                                               {'type': 'ineq', 'fun': lambda w: self.max_turnover - np.sum(np.abs(w - last_weights))}])
                 
                 if result.success:
                     last_weights = result.x
-                else:
-                    print(f"  - Optimizer failed on {date}, holding previous weights.")
-
+                
             weights_df.loc[date] = last_weights
             
         weights_df.ffill(inplace=True)
-        return weights_df
+        
+        # --- Final Regime Calculation for UI ---
+        # To provide a consistent regime map for the UI, we run the SJM once on the full history.
+        print("Calculating final regime map for UI...")
+        final_sjm_features = calculate_jump_model_features(aligned_data)
+        final_sjm = StatisticalJumpModel(n_states=self.n_states, jump_penalty=self.jump_penalty)
+        final_regime_labels = final_sjm.fit(final_sjm_features)
+        
+        return weights_df, final_regime_labels
 
     def _volatility_objective(self, weights, cov_matrix, target_vol):
         """Objective function for the optimizer: minimize difference to target volatility."""
